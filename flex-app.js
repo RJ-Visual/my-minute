@@ -18,7 +18,7 @@
   const project=id=>state.projects.find(p=>p.id===id);
   const anchors=()=>state.tasks.filter(t=>!t.done&&!t.resolution&&t.time).sort((a,b)=>C.parseDue(a)-C.parseDue(b));
   function chosenAnchor(){const all=anchors();return all.find(t=>t.id===anchorId)||all.find(t=>C.parseDue(t)>=Date.now()-60000)||all.at(-1);}
-  function toast(message,canUndo=false){$('#toast').innerHTML=`<span>${esc(message)}</span>${canUndo?'<button data-action="undo">Undo</button>':''}`;$('#toast').classList.add('show');clearTimeout(toastTimeout);toastTimeout=setTimeout(()=>$('#toast').classList.remove('show'),canUndo?10000:4500);}
+  function toast(message,canUndo=false,duration){$('#toast').innerHTML=`<span>${esc(message)}</span>${canUndo?'<button data-action="undo">Undo</button>':''}`;$('#toast').classList.add('show');clearTimeout(toastTimeout);toastTimeout=setTimeout(()=>$('#toast').classList.remove('show'),duration??(canUndo?10000:4500));}
   function mutate(fn,message,canUndo=false,redraw=true){if(blocked){toast('Restore a valid backup to enable saving.');return false;}let before;try{const raw=localStorage.getItem(KEY);if(raw)state=C.validateState(JSON.parse(raw));before=JSON.stringify(state);fn(state);state.revision++;state=C.validateState(state);localStorage.setItem(KEY,JSON.stringify(state));undo=canUndo?{raw:before,revision:state.revision}:null;if(redraw)render();if(message)toast(message,canUndo);return true;}catch(e){if(before)state=JSON.parse(before);if($('#form-error'))$('#form-error').textContent=e.message;toast(e.message||'Could not save. Please export a backup.');return false;}}
   function nav(){return[['home','Today','home'],['plan','Calendar','calendar'],['projects','Projects','projects'],['insights','Insights','chart']].map(([id,label,i])=>'<button class="nav-link '+(page===id?'active':'')+'" data-action="nav" data-page="'+id+'" '+(page===id?'aria-current="page"':'')+'>'+icon(i)+'<span>'+label+'</span></button>').join('');}
   function render(){
@@ -240,7 +240,7 @@
   function startSwipe(e,point,source){
     cancelSwipe();
     // Text editing, native controls, the color plane and icon carousels own their gestures.
-    if(e.target.closest?.('input,textarea,select,[contenteditable],.habit-palette,.habit-icon-strip,.swipe-delete,.bottom-nav,.sidebar,.app-menu'))return;
+    if(e.target.closest?.('input,textarea,select,[contenteditable],.habit-palette,.habit-icon-strip,.bottom-nav,.sidebar,.app-menu'))return;
     const surface=e.target.closest?.('.dialog,.main');if(!surface)return;
     if($('#dialog')?.open&&surface!==$('#dialog'))return;
     const row=e.target.closest?.('[data-swipe-row]'),parent=parentView();if(!row&&!parent)return;
@@ -262,9 +262,10 @@
   }
   function finishSwipe(source){
     const g=swipeGesture;if(!g||g.source!==source)return;
+    const restoringRow=g.mode==='row'&&g.wasOpen&&g.dx>=60&&g.dx>Math.abs(g.dy)*1.4;
     if(g.mode){suppressSwipeClickUntil=Date.now()+400;if(g.mode==='row')g.row.classList.toggle('is-revealed',g.dx+(g.wasOpen?-82:0)<-41);}
     const back=g.mode==='back'&&g.dx>=80&&g.dx>Math.abs(g.dy)*1.4&&parentView()===g.parent;
-    cancelSwipe();if(back)goBack();
+    cancelSwipe();if(restoringRow)toast('Delete canceled.',false,1800);if(back)goBack();
   }
   // Touch events preserve native vertical scrolling and horizontal icon scrolling on iPhone.
   document.addEventListener('touchstart',e=>{if(e.touches.length!==1){cancelSwipe();return;}startSwipe(e,e.touches[0],'touch');},{passive:true});
