@@ -318,3 +318,56 @@ html:has(.dialog[open]),body:has(.dialog[open]){overflow:hidden}
 .saved-habit-swatch>button[aria-pressed="true"]{background:var(--soft);box-shadow:inset 0 0 0 2px var(--ink);border-radius:10px}
 .saved-habit-swatch .remove-saved-color{color:var(--muted)}
 .remove-saved-color svg{width:13px;height:13px}
+
+/* Native-feeling swipe actions for list content. */
+.swipe-row{position:relative;overflow:hidden;min-width:0;touch-action:pan-y;border-radius:12px}
+.swipe-content{position:relative;z-index:1;background:var(--card);transform:translateX(var(--swipe-offset,0));transition:transform .2s ease;min-width:0}
+.swipe-row.is-revealed>.swipe-content{transform:translateX(-82px)}
+.swipe-delete{position:absolute;z-index:0;inset:0 0 0 auto;width:82px;min-height:100%;border-radius:0;background:var(--deep);color:var(--on-hero);font-weight:650;display:flex;align-items:center;justify-content:center}
+.swipe-project{border-radius:18px}.swipe-project>.swipe-content{border-radius:18px}
+.swipe-stage{margin:14px 0;border-radius:15px}.swipe-stage>.swipe-content>.stage-card{margin:0}
+.swipe-habit{border-radius:0}.swipe-habit>.swipe-content{background:var(--card)}
+.swipe-project-task{border-radius:0}.swipe-project-task>.swipe-content{background:transparent}
+.swipe-task,.swipe-habit-entry{border-radius:12px}.swipe-task>.swipe-content,.swipe-habit-entry>.swipe-content{background:var(--card)}
+.swipe-content>.checklist-row.is-current{margin-inline:0}
+@media(prefers-reduced-motion:reduce){.swipe-content{transition:none}}
+
+/* The app theme uses the same direct palette as habit icons. */
+.theme-custom-picker{--habit-color:var(--kiwi);max-width:560px;margin-top:22px}
+.theme-custom-picker .habit-palette{height:180px}
+.theme-custom-picker .habit-custom-color{margin-top:5px}
+.time-blocks.is-empty .empty-block{background:transparent;border:1px dashed var(--line)}
+
+/* Follow the finger when returning to the parent screen. */
+.main.is-swiping-back,.dialog.is-swiping-back{translate:var(--back-offset,0) 0;transition:none;will-change:translate}
+.swipe-row[style*="--swipe-offset"]>.swipe-content{transform:translateX(var(--swipe-offset));transition:none}
+@media(prefers-reduced-motion:reduce){.main.is-swiping-back,.dialog.is-swiping-back{translate:none}}
+
+/* Daily habit curves keep real dates and share one adaptive time axis. */
+.habit-chart-header{display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px;margin:22px 0 14px}
+.habit-chart-header h3{font-size:16px}.habit-chart-header>span{font-size:12px;color:var(--muted)}
+.habit-chart-plot{width:100%;min-width:0;overflow:hidden}
+.habit-line-chart{display:block;width:100%;height:270px;overflow:visible;font-family:inherit}
+.chart-grid-line{stroke:var(--line);stroke-width:1;stroke-dasharray:3 4}
+.chart-axis-label{fill:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+.chart-axis-title{fill:var(--muted);font-size:12px}
+.habit-curve{cursor:pointer;outline:none}
+.chart-curve-line{fill:none;stroke:var(--habit-color);stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round;pointer-events:none}
+.chart-curve-hit{fill:none;stroke:transparent;stroke-width:16;pointer-events:stroke}
+.chart-point{fill:var(--card);stroke:var(--habit-color);stroke-width:2}
+.habit-curve.is-selected .chart-curve-line{stroke-width:3}
+.habit-curve.is-muted{opacity:.24}
+.habit-curve:focus-visible .chart-curve-line{stroke-width:4}
+.habit-chart-legend{display:flex;flex-wrap:wrap;gap:8px;margin:12px 0 20px}
+.habit-chart-legend button{display:flex;align-items:center;gap:7px;padding:7px 11px;border:1px solid var(--line);border-radius:12px;min-height:44px;font-size:13px;text-align:left;max-width:100%}
+.habit-chart-legend button span{overflow-wrap:anywhere}
+.habit-chart-legend svg{width:19px;height:19px;color:var(--habit-color)}
+.habit-chart-legend button[aria-pressed="true"]{background:var(--soft);border-color:var(--deep);color:var(--deep)}
+.habit-chart-summary{padding:17px;border-radius:14px;background:var(--bg);border:1px solid var(--line)}
+.habit-chart-summary h3{display:flex;align-items:center;gap:8px;margin-bottom:10px;font-size:16px;overflow-wrap:anywhere}
+.habit-chart-summary h3 svg{color:var(--habit-color)}
+.habit-chart-summary p{font-size:14px;line-height:1.7;color:var(--muted)}
+.habit-chart-summary p+p{margin-top:5px}.habit-chart-summary strong{color:var(--ink);font-weight:600}
+.other-recorded-time{border-top:1px solid var(--line);margin-top:22px;padding-top:18px}
+.other-recorded-time>div{display:flex;justify-content:space-between;gap:16px;font-size:14px;margin-top:12px}
+.other-recorded-time strong{font-size:13px;white-space:nowrap;font-weight:550;color:var(--muted)}

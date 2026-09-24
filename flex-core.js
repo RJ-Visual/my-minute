@@ -57,6 +57,24 @@
     return{expired:exact<=0,remainingMs,days:Math.floor(seconds/86400),hours:Math.floor(seconds%86400/3600),minutes:Math.floor(seconds%3600/60),seconds:seconds%60};
   }
   function projectMinutes(state,projectId,now=Date.now()){return minutesBetween(state,0,now,now,projectId);}
+  function habitTimeSeries(state,period='week',now=Date.now()){
+    const first=new Date(now);first.setHours(0,0,0,0);
+    if(period==='month')first.setDate(1);else first.setDate(first.getDate()-first.getDay());
+    const count=period==='month'?new Date(first.getFullYear(),first.getMonth()+1,0).getDate():7,today=dayKey(now);
+    const dates=Array.from({length:count},(_,i)=>{const d=new Date(first);d.setDate(d.getDate()+i);const end=new Date(d);end.setDate(end.getDate()+1);return{key:dayKey(d),start:d.getTime(),end:end.getTime()};});
+    const sessions=new Map();for(const s of state.sessions)if(s.habitId){if(!sessions.has(s.habitId))sessions.set(s.habitId,[]);sessions.get(s.habitId).push(s);}
+    const series=state.habits.map(h=>{
+      const history={sessions:sessions.get(h.id)||[]},created=dayKey(h.createdAt),archived=h.archivedAt?dayKey(h.archivedAt):null;
+      const values=dates.map(d=>{if(d.key>today)return null;const m=minutesBetween(history,d.start,d.end,now);return m>0?m:d.key<created||archived&&d.key>archived?null:0;});
+      return{id:h.id,name:h.name,icon:h.icon,color:h.color||state.themeColor||'#658d22',archived:!!h.archivedAt,values,total:values.reduce((sum,n)=>sum+(n||0),0)};
+    }).filter(h=>!h.archived||h.total>0);
+    return{dates,series};
+  }
+  function timeChartScale(maxMinutes,unit='minutes',height=200){
+    const divisor=unit==='hours'?60:1,max=Math.max(0,maxMinutes)/divisor||60/divisor,count=Math.max(3,Math.min(6,Math.floor(height/48))),raw=max/count,power=10**Math.floor(Math.log10(raw));
+    const step=[1,2,2.5,5,10].map(n=>n*power).find(n=>n>=raw),top=Math.ceil(max/step)*step;
+    return{max:top,step,divisor,ticks:Array.from({length:Math.round(top/step)+1},(_,i)=>Number((i*step).toPrecision(10)))};
+  }
   function minutesBetween(state,start,end,now=Date.now(),projectId=null,habitId=null,taskId=null){
     return state.sessions.filter(s=>(!projectId||s.projectId===projectId)&&(!habitId||s.habitId===habitId)&&(!taskId||s.taskId===taskId)).reduce((n,s)=>{
       if(s.entryDate){const d=new Date(s.entryDate+'T00:00:00').getTime();return n+(d>=start&&d<end&&d<=now?s.durationMs:0);}
@@ -123,7 +141,7 @@
   }
   function replaceStages(state,project,stages){
     project.stages=stages;const ids=new Set(stages.map(s=>s.id));
-    if(!ids.has(project.currentStageId))project.currentStageId=null;
+    project.currentStageIds=(project.currentStageIds||[]).filter(id=>ids.has(id));
     for(const t of state.projectTasks||[])if(t.projectId===project.id&&t.stageId&&!ids.has(t.stageId))t.stageId=null;
     for(const t of state.tasks)if(t.projectId===project.id&&t.stageId&&!ids.has(t.stageId))t.stageId=null;
     for(const s of state.sessions)if(s.projectId===project.id&&s.stageId&&!ids.has(s.stageId))s.stageId=null;
@@ -217,11 +235,11 @@
     if(!['minutes','hours'].includes(raw.displayUnit))throw new Error('Invalid time display unit.');
     for(const [k,max] of [['projects',500],['tasks',20000],['sessions',100000]])if(!Array.isArray(raw[k])||raw[k].length>max)throw new Error(`Invalid ${k} list.`);
     const ids=new Set();const takeId=v=>{const x=id(v);if(ids.has(x))throw new Error('Duplicate item IDs.');ids.add(x);return x;};
-    const projects=raw.projects.map(p=>{if(!p||typeof p!=='object'||!Array.isArray(p.stages)||p.stages.length>100)throw new Error('Invalid project.');return{id:takeId(p.id),name:text(p.name,'Project name',100),description:typeof p.description==='string'&&p.description.length<=6000?p.description:'',currentStageId:p.currentStageId||null,color:['kiwi','moss','olive','mint'].includes(p.color)?p.color:'kiwi',stages:p.stages.map(s=>{if(typeof s.done!=='boolean')throw new Error('Invalid stage completion.');return{id:takeId(s.id),label:text(s.label,'Stage',120),done:s.done,status:s.done?'done':s.status==='in_progress'?'in_progress':'todo'};}),createdAt:stamp(p.createdAt)};});
+    const projects=raw.projects.map(p=>{if(!p||typeof p!=='object'||!Array.isArray(p.stages)||p.stages.length>100)throw new Error('Invalid project.');const active=p.currentStageIds===undefined?(p.currentStageId?[p.currentStageId]:[]):p.currentStageIds;if(!Array.isArray(active)||active.length>100||new Set(active).size!==active.length)throw new Error('Invalid active stages.');return{id:takeId(p.id),name:text(p.name,'Project name',100),description:typeof p.description==='string'&&p.description.length<=6000?p.description:'',currentStageIds:[...active],color:['kiwi','moss','olive','mint'].includes(p.color)?p.color:'kiwi',stages:p.stages.map(s=>{if(typeof s.done!=='boolean')throw new Error('Invalid stage completion.');return{id:takeId(s.id),label:text(s.label,'Stage',120),done:s.done,status:s.done?'done':s.status==='in_progress'?'in_progress':'todo'};}),createdAt:stamp(p.createdAt)};});
     const projectIds=new Set(projects.map(p=>p.id));const projectRef=v=>v===null?null:projectIds.has(v)?v:(()=>{throw new Error('A saved item refers to a missing project.');})();
     const stageRef=(value,pid)=>{if(value==null)return null;if(!projects.find(p=>p.id===pid)?.stages.some(s=>s.id===value))throw new Error('A task or time entry refers to a missing stage.');return value;};
     const tasks=raw.tasks.map(t=>{parseDue(t);if(t.status!=null&&!['todo','in_progress','done'].includes(t.status))throw new Error('Invalid task status.');if(t.notes!=null&&(typeof t.notes!=='string'||t.notes.length>6000))throw new Error('Invalid task notes.');if(typeof t.done!=='boolean')throw new Error('Invalid task completion.');return{id:takeId(t.id),title:text(t.title,'Task title',180),date:validDay(t.date),time:t.time||null,projectId:projectRef(t.projectId),stageId:stageRef(t.stageId,t.projectId),projectTaskId:t.projectTaskId||null,source:t.source?{projectName:text(t.source.projectName,'Source project',100),stageName:t.source.stageName?text(t.source.stageName,'Source stage',120):'',taskTitle:text(t.source.taskTitle,'Source task',180)}:null,done:t.done,status:t.done?'done':t.status==='in_progress'?'in_progress':'todo',notes:t.notes||'',resolution:t.resolution==='let_go'?'let_go':null,createdAt:stamp(t.createdAt)};});
-    for(const p of projects)if(p.currentStageId&&!p.stages.some(s=>s.id===p.currentStageId))throw new Error('Current stage is missing.');
+    for(const p of projects)if(p.currentStageIds.some(id=>!p.stages.some(s=>s.id===id)))throw new Error('An active stage is missing.');
     let rawProjectTasks=raw.projectTasks;
     if(rawProjectTasks===undefined){rawProjectTasks=tasks.filter(t=>t.projectId).map(t=>{const task={id:uid(),title:t.title,projectId:t.projectId,stageId:t.stageId,status:t.done?'done':t.status,createdAt:t.createdAt};t.projectTaskId=task.id;const p=projects.find(p=>p.id===t.projectId);t.source={projectName:p.name,stageName:p.stages.find(s=>s.id===t.stageId)?.label||'',taskTitle:t.title};return task;});}
     if(!Array.isArray(rawProjectTasks)||rawProjectTasks.length>20000)throw new Error('Invalid project tasks.');
@@ -257,5 +275,5 @@
     for(const e of habitEntries){if(e.resolution){e.status='todo';continue;}if(e.status==='in_progress'){if(active)e.status='todo';else active=true;}}
     return{version:2,revision:raw.revision,displayUnit:raw.displayUnit,themeColor:themeColor.toLowerCase(),savedHabitColors,projects,projectTasks,tasks,sessions,habits,habitChecks,habitEntries,events,timer,previousTimer:previousTimer?JSON.parse(JSON.stringify(previousTimer)):null,legacyGoals:JSON.parse(JSON.stringify(legacyGoals))};
   }
-return{MIN,HABIT_ICON_GROUPS,addProjectTask,addTodayEntry,setProjectTaskStatus,deleteProject,stageSummary,replaceStages,itemDayMinutes,setItemDayMinutes,timeMinute,validateEvent,eventsOnDate,habitAvailable,resolveUnfinished,HABIT_ICONS,habitScheduled,toggleHabit,habitMinutes,setItemMinutes,updateTask,dailyTasks,habitEntry,itemStatus,itemRunning,setItemStatus,saveItemNotes,deleteTask,uid,dayKey,validDay,themeTokens,formatClock,stopTimer,startTimer,addMinutes,migrate,emptyState,startOfWeekSunday,nextWeekStart,weekClock,parseDue,countdown,projectMinutes,minutesBetween,stagePercent,createState,validateState};
+return{MIN,HABIT_ICON_GROUPS,habitTimeSeries,timeChartScale,addProjectTask,addTodayEntry,setProjectTaskStatus,deleteProject,stageSummary,replaceStages,itemDayMinutes,setItemDayMinutes,timeMinute,validateEvent,eventsOnDate,habitAvailable,resolveUnfinished,HABIT_ICONS,habitScheduled,toggleHabit,habitMinutes,setItemMinutes,updateTask,dailyTasks,habitEntry,itemStatus,itemRunning,setItemStatus,saveItemNotes,deleteTask,uid,dayKey,validDay,themeTokens,formatClock,stopTimer,startTimer,addMinutes,migrate,emptyState,startOfWeekSunday,nextWeekStart,weekClock,parseDue,countdown,projectMinutes,minutesBetween,stagePercent,createState,validateState};
 });
