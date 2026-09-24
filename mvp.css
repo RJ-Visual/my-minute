@@ -332,6 +332,8 @@ html:has(.dialog[open]),body:has(.dialog[open]){overflow:hidden}
 .swipe-project-task{border-radius:0}.swipe-project-task>.swipe-content{background:transparent}
 .swipe-task,.swipe-habit-entry{border-radius:12px}.swipe-task>.swipe-content,.swipe-habit-entry>.swipe-content{background:var(--card)}
 .swipe-content>.checklist-row.is-current{margin-inline:0}
+/* The outer row owns the rounded corners; the Delete seam stays straight. */
+.swipe-row>.swipe-content,.swipe-row>.swipe-content>.stage-card,.swipe-row>.swipe-content>.project-overview,.swipe-row>.swipe-content>.checklist-row{border-top-right-radius:0;border-bottom-right-radius:0}
 @media(prefers-reduced-motion:reduce){.swipe-content,.swipe-delete{transition:none}}
 
 /* The app theme uses the same direct palette as habit icons. */
