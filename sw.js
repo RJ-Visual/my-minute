@@ -1,4 +1,4 @@
-const CACHE = 'my-minute-shell-v39-straight-delete-seam';
+const CACHE = 'my-minute-shell-v40-rounded-delete';
 const ASSETS = ['./','./index.html','./flex-styles.css','./mvp.css','./core.js','./flex-core.js','./flex-app.js','./icon.svg','./manifest.webmanifest','./apple-touch-icon.png','./icon-192.png','./icon-512.png'];
 self.addEventListener('install', event => event.waitUntil(caches.open(CACHE).then(cache => cache.addAll(ASSETS)).then(()=>self.skipWaiting())));
 self.addEventListener('activate', event => event.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(key => (key.startsWith('minute-shell-') || key.startsWith('my-minute-shell-')) && key !== CACHE).map(key => caches.delete(key)))).then(()=>self.clients.claim())));
