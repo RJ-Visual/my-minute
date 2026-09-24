@@ -239,6 +239,8 @@
   function cancelSwipe(){if(!swipeGesture)return;swipeGesture.row?.style.removeProperty('--swipe-offset');swipeGesture.surface?.style.removeProperty('--back-offset');swipeGesture.surface?.classList.remove('is-swiping-back');swipeGesture=null;}
   function startSwipe(e,point,source){
     cancelSwipe();
+    // A fresh press can act immediately; only the trailing click from a drag is suppressed.
+    suppressSwipeClickUntil=0;
     // Text editing, native controls, the color plane and icon carousels own their gestures.
     if(e.target.closest?.('input,textarea,select,[contenteditable],.habit-palette,.habit-icon-strip,.bottom-nav,.sidebar,.app-menu'))return;
     const surface=e.target.closest?.('.dialog,.main');if(!surface)return;
@@ -257,15 +259,14 @@
       if(!g.mode){cancelSwipe();return;}
     }
     if(e.cancelable!==false)e.preventDefault();
-    if(g.mode==='row')g.row.style.setProperty('--swipe-offset',Math.max(-88,Math.min(0,dx+(g.wasOpen?-82:0)))+'px');
+    if(g.mode==='row')g.row.style.setProperty('--swipe-offset',Math.max(-82,Math.min(0,dx+(g.wasOpen?-82:0)))+'px');
     else {g.surface.classList.add('is-swiping-back');g.surface.style.setProperty('--back-offset',Math.max(0,Math.min(90,dx*.4))+'px');}
   }
   function finishSwipe(source){
     const g=swipeGesture;if(!g||g.source!==source)return;
-    const restoringRow=g.mode==='row'&&g.wasOpen&&g.dx>=60&&g.dx>Math.abs(g.dy)*1.4;
     if(g.mode){suppressSwipeClickUntil=Date.now()+400;if(g.mode==='row')g.row.classList.toggle('is-revealed',g.dx+(g.wasOpen?-82:0)<-41);}
     const back=g.mode==='back'&&g.dx>=80&&g.dx>Math.abs(g.dy)*1.4&&parentView()===g.parent;
-    cancelSwipe();if(restoringRow)toast('Delete canceled.',false,1800);if(back)goBack();
+    cancelSwipe();if(back)goBack();
   }
   // Touch events preserve native vertical scrolling and horizontal icon scrolling on iPhone.
   document.addEventListener('touchstart',e=>{if(e.touches.length!==1){cancelSwipe();return;}startSwipe(e,e.touches[0],'touch');},{passive:true});
