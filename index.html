@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#658d22">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="My Minute">
+  <meta name="description" content="A simple daily checklist and a colorful calendar. Choose one thing for now, and make room for what comes next.">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="stylesheet" href="flex-styles.css">
+  <link rel="stylesheet" href="mvp.css">
+  <title>My Minute — Your time, on your terms</title>
+  <script defer src="core.js"></script>
+  <script defer src="flex-core.js"></script>
+  <script defer src="flex-app.js"></script>
+</head>
+<body>
+  <div id="app"></div>
+  <dialog id="dialog" class="dialog" aria-labelledby="dialog-title"></dialog>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  <noscript>Please enable JavaScript to use Minute. Your time and tasks are saved on this device.</noscript>
+</body>
+</html>
