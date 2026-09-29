@@ -26,7 +26,7 @@
     {id:'everyday',label:'Everyday',icons:[['coffee','Coffee'],['meal','Cooking'],['home','Home'],['broom','Cleaning'],['bag','Shopping'],['wallet','Budget']]}
   ];
   const HABIT_ICONS=HABIT_ICON_GROUPS.flatMap(g=>g.icons.map(([id])=>id));
-  function emptyState(){return{version:2,revision:0,displayUnit:'minutes',themeColor:'#658d22',savedHabitColors:[],events:[],projectTasks:[],projects:[],tasks:[],sessions:[],habits:[],habitChecks:[],habitEntries:[],timer:null,legacyGoals:[]};}
+  function emptyState(){return{version:2,revision:0,displayUnit:'minutes',themeColor:'#658d22',savedHabitColors:[],remindersEnabled:false,ignoredExternalIds:[],events:[],projectTasks:[],projects:[],tasks:[],sessions:[],habits:[],habitChecks:[],habitEntries:[],timer:null,legacyGoals:[]};}
   function habitScheduled(h,date){
     validDay(date);
     return date>=dayKey(h.createdAt)&&(!h.archivedAt||date<dayKey(h.archivedAt))&&h.repeatDays.includes(new Date(date+'T12:00:00').getDay());
@@ -83,7 +83,7 @@
   }
   function setItemMinutes(state,t,minutes,now=Date.now()){
     if(!Number.isFinite(minutes)||minutes<0||minutes>(t.habitId?1440:10000000))throw new Error('Enter a valid total in minutes.');
-    const current=t.habitId?dailyTasks(state,t.date).find(x=>x.habitId===t.habitId):state.tasks.find(x=>x.id===t.id);
+    const current=t.habitId?dailyTasks(state,t.date).find(x=>x.habitId===t.habitId):materializeTask(state,t);
     if(!current)throw new Error('Item no longer exists.');
     if(current.date>dayKey(now))throw new Error('Enter completed time on today or an earlier date.');
     if(!current.habitId){
@@ -114,7 +114,7 @@
   function setItemDayMinutes(state,t,date,minutes,now=Date.now()){
     validDay(date);if(date>dayKey(now))throw new Error('Record time on today or an earlier date.');
     if(!Number.isFinite(minutes)||minutes<0||minutes>1440)throw new Error('Enter 0 to 1,440 minutes for this day.');
-    const owner=t.habitId?state.habits.find(h=>h.id===t.habitId):state.tasks.find(x=>x.id===t.id);if(!owner)throw new Error('Item no longer exists.');
+    const owner=t.habitId?state.habits.find(h=>h.id===t.habitId):materializeTask(state,t);if(!owner)throw new Error('Item no longer exists.');
     const start=new Date(date+'T00:00:00'),end=new Date(start);end.setDate(end.getDate()+1);const a=start.getTime(),b=end.getTime(),keep=[];
     for(const s of state.sessions){
       if(t.habitId?s.habitId!==t.habitId:s.taskId!==t.id){keep.push(s);continue;}
@@ -170,7 +170,7 @@
       const h=state.habits.find(h=>h.id===t.habitId);if(!h)throw new Error('Habit no longer exists.');
       const e=habitEntry(state,h.id,t.date,true);e.resolution=target?'moved':'let_go';if(target)e.movedTo=target;else delete e.movedTo;
       if(target){const next=habitEntry(state,h.id,target,true);next.extra=true;delete next.resolution;delete next.movedTo;}
-    }else{const task=state.tasks.find(x=>x.id===t.id);if(!task)throw new Error('Task no longer exists.');if(target)updateTask(state,task,{date:target,resolution:null});else task.resolution='let_go';}
+    }else{const task=materializeTask(state,t);if(!task)throw new Error('Task no longer exists.');if(target&&task.calendarEventId){const ev=state.events.find(e=>e.id===task.calendarEventId);moveCalendarEvent(state,ev.id,task.occurrenceDate,target,ev.startTime,ev.endTime,now);return;}if(target)updateTask(state,task,{date:target,resolution:null});else task.resolution='let_go';}
   }
   function habitMinutes(state,habitId,now=Date.now()){return minutesBetween(state,0,now,now,null,habitId);}
   function habitEntry(state,habitId,date,create=false){let e=(state.habitEntries||[]).find(e=>e.habitId===habitId&&e.date===date);if(!e&&create){e={habitId,date,status:'todo',notes:''};(state.habitEntries||= []).push(e);}return e;}
@@ -178,7 +178,7 @@
   function itemRunning(state,t){return !!state.timer&&(t.habitId?state.timer.habitId===t.habitId&&t.date===dayKey(state.timer.startedAt):state.timer.taskId===t.id);}
   function setItemStatus(state,t,status,now=Date.now()){
     if(!['todo','in_progress','done'].includes(status))throw new Error('Invalid task status.');
-    const current=t.habitId?dailyTasks(state,t.date).find(x=>x.habitId===t.habitId):state.tasks.find(x=>x.id===t.id);
+    const current=t.habitId?dailyTasks(state,t.date).find(x=>x.habitId===t.habitId):materializeTask(state,t);
     if(!current)throw new Error('Item no longer exists.');
     if(current.habitId&&current.date>dayKey(now)&&status!=='todo')throw new Error('Future habits are not ready to start.');
     if(status==='in_progress'){
@@ -196,12 +196,64 @@
   function saveItemNotes(state,t,notes){
     if(typeof notes!=='string'||notes.length>6000)throw new Error('Keep notes within 6,000 characters.');
     if(t.habitId){if(!(state.habits||[]).some(h=>h.id===t.habitId))throw new Error('Habit no longer exists.');habitEntry(state,t.habitId,validDay(t.date),true).notes=notes;}
-    else {const task=state.tasks.find(x=>x.id===t.id);if(!task)throw new Error('Task no longer exists.');task.notes=notes;}
+    else {const task=materializeTask(state,t);if(!task)throw new Error('Task no longer exists.');task.notes=notes;}
   }
   function deleteTask(state,id,now=Date.now()){if(state.timer?.taskId===id)stopTimer(state,now);state.tasks=state.tasks.filter(t=>t.id!==id);state.sessions.forEach(s=>{if(s.taskId===id)delete s.taskId;});}
+  const PRIORITIES=['high','medium','low','none'];
+  function priorityValue(value){if(value==null)return 'none';if(!PRIORITIES.includes(value))throw new Error('Choose a valid priority.');return value;}
+  function reminderValue(value){if(value==null||value==='')return null;const n=Number(value);if(![0,5,10,15,30,60,1440].includes(n))throw new Error('Choose a valid reminder.');return n;}
+  function mergeCalendarImport(state,records){
+    if(!Array.isArray(records)||records.length>20000)throw new Error('Calendar sync is too large.');
+    const imported=[],ignored=new Set(state.ignoredExternalIds||[]);
+    for(const record of records){
+      if(!/^[a-f0-9]{64}$/.test(record.id)||!['google','icloud'].includes(record.provider))throw new Error('Invalid calendar source.');
+      if(ignored.has(record.id))continue;
+      const allDay=!!record.startDate,start=allDay?new Date(validDay(record.startDate)+'T00:00:00'):new Date(record.start),end=allDay?new Date(validDay(record.endDate)+'T00:00:00'):new Date(record.end);
+      if(!Number.isFinite(start.getTime())||!Number.isFinite(end.getTime())||end<=start)throw new Error('Invalid imported event times.');
+      let date=dayKey(start),count=0;
+      while(new Date(date+'T00:00:00')<end){
+        if(++count>370)throw new Error('An imported event spans more than a year.');
+        const midnight=new Date(date+'T00:00:00'),next=new Date(midnight);next.setDate(next.getDate()+1);
+        const partStart=new Date(Math.max(start,midnight)),partEnd=new Date(Math.min(end,next)),clock=d=>String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0');
+        const id='external_'+record.id+'_'+date,previous=state.events.find(e=>e.id===id);
+        if(previous?.localOverride)imported.push(previous);else imported.push(validateEvent({id,title:record.title,date,startTime:clock(partStart),endTime:partEnd.getTime()===next.getTime()?'24:00':clock(partEnd),repeat:'none',repeatDays:[],excludedDates:[],color:/^#[0-9a-f]{6}$/i.test(record.color)?record.color:'#347da5',createdAt:previous?.createdAt||Date.now(),priority:previous?.priority,reminderMinutes:previous?.reminderMinutes,externalId:record.id,externalOffset:partStart.getTime()-start.getTime(),externalProvider:record.provider,allDay}));
+        date=dayKey(next);
+      }
+    }
+    const incoming=new Set(imported.map(e=>e.id));state.events=[...state.events.filter(e=>!e.externalId||e.localOverride&&!incoming.has(e.id)),...imported];
+  }
+  function reminderJobs(state,now=Date.now()){
+    const jobs=[],today=new Date(now);today.setHours(0,0,0,0);
+    for(let n=0;n<366;n++){const d=new Date(today);d.setDate(d.getDate()+n);const date=dayKey(d);
+      for(const t of dailyTasks(state,date)){if(!t.time||t.done||t.resolution)continue;const ev=t.calendarEventId?state.events.find(e=>e.id===t.calendarEventId):null,lead=ev?ev.reminderMinutes:t.reminderMinutes;if(lead==null)continue;
+        const due=new Date(date+'T'+t.time+':00').getTime()-lead*MIN;if(due<=now)continue;jobs.push({id:t.id,title:t.title,due,...(ev?.externalId&&!ev.localOverride&&!ev.allDay?{externalId:ev.externalId,offset:ev.externalOffset||0,lead}: {})});
+      }
+    }return jobs;
+  }
+  function calendarTasks(state,date){
+    return eventsOnDate(state,date).map(e=>{
+      const saved=state.tasks.find(t=>t.calendarEventId===e.id&&t.occurrenceDate===date);
+      return {...(saved||{id:'calendar_'+e.id+'_'+date,done:false,status:'todo',notes:'',projectId:null,createdAt:e.createdAt}),title:e.title,date,time:e.startTime,calendarEventId:e.id,occurrenceDate:date,priority:saved?.priority||e.priority||'none',reminderMinutes:saved?.reminderMinutes??e.reminderMinutes??null};
+    }).filter(t=>!t.resolution);
+  }
+  function materializeTask(state,t){
+    let task=state.tasks.find(x=>x.id===t.id);
+    if(!task&&t.calendarEventId){const current=calendarTasks(state,t.occurrenceDate||t.date).find(x=>x.id===t.id);if(current){task={...current};state.tasks.push(task);}}
+    return task;
+  }
+  function setItemPriority(state,t,value){value=priorityValue(value);if(t.habitId)habitEntry(state,t.habitId,t.date,true).priority=value;else {const task=materializeTask(state,t);if(!task)throw new Error('Item no longer exists.');task.priority=value;}}
+  function moveCalendarEvent(state,eventId,occurrenceDate,date,startTime,endTime,now=Date.now()){
+    const event=state.events.find(e=>e.id===eventId);if(!event||!eventsOnDate(state,occurrenceDate).some(e=>e.id===eventId))throw new Error('Event no longer exists.');
+    const next=validateEvent({...event,localOverride:!!event.externalId,id:event.repeat==='none'?event.id:uid(),date,startTime,endTime,repeat:'none',repeatDays:[],excludedDates:[]});
+    if(new Date(date+'T'+startTime+':00').getTime()<=now)throw new Error('Choose a future date and time.');
+    if(event.repeat==='none')Object.assign(event,next);
+    else {event.excludedDates.push(occurrenceDate);state.events.push(next);}
+    for(const t of state.tasks)if(t.calendarEventId===eventId&&t.occurrenceDate===occurrenceDate){t.calendarEventId=next.id;t.occurrenceDate=date;t.date=date;t.time=startTime;t.resolution=null;t.status='todo';t.done=false;}
+    return next;
+  }
   function dailyTasks(state,date){
     validDay(date);const checks=new Set((state.habitChecks||[]).filter(c=>c.date===date).map(c=>c.habitId));
-    return [...state.tasks.filter(t=>t.date===date&&!t.resolution),...(state.habits||[]).filter(h=>habitAvailable(state,h,date)||checks.has(h.id)).map(h=>({id:'habit_'+h.id+'_'+date,habitId:h.id,title:habitEntry(state,h.id,date)?.title||h.name,date,time:null,projectId:null,done:checks.has(h.id),status:checks.has(h.id)?'done':habitEntry(state,h.id,date)?.status||'todo',notes:habitEntry(state,h.id,date)?.notes||''}))];
+    return [...state.tasks.filter(t=>t.date===date&&!t.resolution&&!t.calendarEventId),...calendarTasks(state,date),...(state.habits||[]).filter(h=>habitAvailable(state,h,date)||checks.has(h.id)).map(h=>({id:'habit_'+h.id+'_'+date,habitId:h.id,title:habitEntry(state,h.id,date)?.title||h.name,date,time:null,projectId:null,done:checks.has(h.id),status:checks.has(h.id)?'done':habitEntry(state,h.id,date)?.status||'todo',notes:habitEntry(state,h.id,date)?.notes||'',priority:habitEntry(state,h.id,date)?.priority||'none'}))];
   }
   function stagePercent(project){return project.stages.length?project.stages.filter(x=>x.done).length/project.stages.length*100:0;}
   function nextSaturday(now){const d=new Date(now);const add=(6-d.getDay()+7)%7;if(add===0&&d.getHours()>=14)d.setDate(d.getDate()+7);else d.setDate(d.getDate()+add);d.setHours(14,0,0,0);return d;}
@@ -222,13 +274,13 @@
     const repeatDays=e.repeatDays||[];if(!Array.isArray(repeatDays)||repeatDays.some(d=>!Number.isInteger(d)||d<0||d>6)||new Set(repeatDays).size!==repeatDays.length||(repeat==='custom'&&!repeatDays.length))throw new Error('Choose at least one custom repeat day.');
     themeTokens(e.color);
     const excludedDates=e.excludedDates||[];if(!Array.isArray(excludedDates)||excludedDates.length>10000)throw new Error('Invalid excluded dates.');
-    return{id:id(e.id),title:text(e.title,'Event title',180),date,startTime:e.startTime,endTime:e.endTime,repeat,repeatDays:[...repeatDays],color:e.color.toLowerCase(),excludedDates:[...new Set(excludedDates.map(validDay))],createdAt:stamp(e.createdAt)};
+    return{id:id(e.id),...(e.externalId?{externalId:text(e.externalId,'External ID',180),externalOffset:Number.isFinite(e.externalOffset)&&e.externalOffset>=0?Math.min(e.externalOffset,370*86400000):0,externalProvider:['google','icloud'].includes(e.externalProvider)?e.externalProvider:'google',localOverride:e.localOverride===true,allDay:e.allDay===true}:{}),priority:priorityValue(e.priority),reminderMinutes:reminderValue(e.reminderMinutes),title:text(e.title,'Event title',180),date,startTime:e.startTime,endTime:e.endTime,repeat,repeatDays:[...repeatDays],color:e.color.toLowerCase(),excludedDates:[...new Set(excludedDates.map(validDay))],createdAt:stamp(e.createdAt)};
   }
   function eventsOnDate(state,date){
     validDay(date);const d=new Date(date+'T12:00:00');
     return (state.events||[]).filter(e=>{if(date<e.date||e.excludedDates.includes(date))return false;const first=new Date(e.date+'T12:00:00');return e.repeat==='none'?date===e.date:e.repeat==='daily'?true:e.repeat==='weekly'?d.getDay()===first.getDay():e.repeat==='monthly'?d.getDate()===first.getDate():e.repeatDays.includes(d.getDay());}).map(e=>({...e,occurrenceDate:date})).sort((a,b)=>a.startTime.localeCompare(b.startTime)||a.title.localeCompare(b.title));
   }
-  function id(v){const n=text(v,'ID',120);if(!/^[A-Za-z0-9_-]+$/.test(n))throw new Error('Invalid item ID.');return n;}
+  function id(v){const n=text(v,'ID',180);if(!/^[A-Za-z0-9_-]+$/.test(n))throw new Error('Invalid item ID.');return n;}
   function validateState(raw){
     if(!raw||typeof raw!=='object'||raw.version!==2)throw new Error('This backup is not a Minute flexible-time backup.');
     if(!Number.isSafeInteger(raw.revision)||raw.revision<0)throw new Error('Invalid backup revision.');
@@ -238,7 +290,7 @@
     const projects=raw.projects.map(p=>{if(!p||typeof p!=='object'||!Array.isArray(p.stages)||p.stages.length>100)throw new Error('Invalid project.');const active=p.currentStageIds===undefined?(p.currentStageId?[p.currentStageId]:[]):p.currentStageIds;if(!Array.isArray(active)||active.length>100||new Set(active).size!==active.length)throw new Error('Invalid active stages.');return{id:takeId(p.id),name:text(p.name,'Project name',100),description:typeof p.description==='string'&&p.description.length<=6000?p.description:'',currentStageIds:[...active],color:['kiwi','moss','olive','mint'].includes(p.color)?p.color:'kiwi',stages:p.stages.map(s=>{if(typeof s.done!=='boolean')throw new Error('Invalid stage completion.');return{id:takeId(s.id),label:text(s.label,'Stage',120),done:s.done,status:s.done?'done':s.status==='in_progress'?'in_progress':'todo'};}),createdAt:stamp(p.createdAt)};});
     const projectIds=new Set(projects.map(p=>p.id));const projectRef=v=>v===null?null:projectIds.has(v)?v:(()=>{throw new Error('A saved item refers to a missing project.');})();
     const stageRef=(value,pid)=>{if(value==null)return null;if(!projects.find(p=>p.id===pid)?.stages.some(s=>s.id===value))throw new Error('A task or time entry refers to a missing stage.');return value;};
-    const tasks=raw.tasks.map(t=>{parseDue(t);if(t.status!=null&&!['todo','in_progress','done'].includes(t.status))throw new Error('Invalid task status.');if(t.notes!=null&&(typeof t.notes!=='string'||t.notes.length>6000))throw new Error('Invalid task notes.');if(typeof t.done!=='boolean')throw new Error('Invalid task completion.');return{id:takeId(t.id),title:text(t.title,'Task title',180),date:validDay(t.date),time:t.time||null,projectId:projectRef(t.projectId),stageId:stageRef(t.stageId,t.projectId),projectTaskId:t.projectTaskId||null,source:t.source?{projectName:text(t.source.projectName,'Source project',100),stageName:t.source.stageName?text(t.source.stageName,'Source stage',120):'',taskTitle:text(t.source.taskTitle,'Source task',180)}:null,done:t.done,status:t.done?'done':t.status==='in_progress'?'in_progress':'todo',notes:t.notes||'',resolution:t.resolution==='let_go'?'let_go':null,createdAt:stamp(t.createdAt)};});
+    const tasks=raw.tasks.map(t=>{parseDue(t);if(t.status!=null&&!['todo','in_progress','done'].includes(t.status))throw new Error('Invalid task status.');if(t.notes!=null&&(typeof t.notes!=='string'||t.notes.length>6000))throw new Error('Invalid task notes.');if(typeof t.done!=='boolean')throw new Error('Invalid task completion.');return{id:takeId(t.id),priority:priorityValue(t.priority),reminderMinutes:reminderValue(t.reminderMinutes),...(t.calendarEventId?{calendarEventId:id(t.calendarEventId),occurrenceDate:validDay(t.occurrenceDate)}:{}),title:text(t.title,'Task title',180),date:validDay(t.date),time:t.time||null,projectId:projectRef(t.projectId),stageId:stageRef(t.stageId,t.projectId),projectTaskId:t.projectTaskId||null,source:t.source?{projectName:text(t.source.projectName,'Source project',100),stageName:t.source.stageName?text(t.source.stageName,'Source stage',120):'',taskTitle:text(t.source.taskTitle,'Source task',180)}:null,done:t.done,status:t.done?'done':t.status==='in_progress'?'in_progress':'todo',notes:t.notes||'',resolution:t.resolution==='let_go'?'let_go':null,createdAt:stamp(t.createdAt)};});
     for(const p of projects)if(p.currentStageIds.some(id=>!p.stages.some(s=>s.id===id)))throw new Error('An active stage is missing.');
     let rawProjectTasks=raw.projectTasks;
     if(rawProjectTasks===undefined){rawProjectTasks=tasks.filter(t=>t.projectId).map(t=>{const task={id:uid(),title:t.title,projectId:t.projectId,stageId:t.stageId,status:t.done?'done':t.status,createdAt:t.createdAt};t.projectTaskId=task.id;const p=projects.find(p=>p.id===t.projectId);t.source={projectName:p.name,stageName:p.stages.find(s=>s.id===t.stageId)?.label||'',taskTitle:t.title};return task;});}
@@ -263,7 +315,7 @@
     const habitIds=new Set(habits.map(h=>h.id)),checks=new Set();
     const habitChecks=rawChecks.map(c=>{if(!c||!habitIds.has(c.habitId))throw new Error('A check-in refers to a missing habit.');const date=validDay(c.date),key=c.habitId+':'+date;if(checks.has(key))throw new Error('Duplicate habit check-in.');checks.add(key);return{habitId:c.habitId,date};});
     const rawEntries=raw.habitEntries??[];if(!Array.isArray(rawEntries)||rawEntries.length>100000)throw new Error('Invalid habit notes.');const entryKeys=new Set();
-    const habitEntries=rawEntries.map(e=>{if(!e||!habitIds.has(e.habitId)||!['todo','in_progress'].includes(e.status)||typeof e.notes!=='string'||e.notes.length>6000)throw new Error('Invalid habit note or status.');const date=validDay(e.date),key=e.habitId+':'+date;if(entryKeys.has(key))throw new Error('Duplicate daily habit notes.');entryKeys.add(key);if(e.resolution!=null&&!['moved','let_go'].includes(e.resolution))throw new Error('Invalid daily decision.');return{habitId:e.habitId,date,status:e.status,notes:e.notes,...(e.title?{title:text(e.title,'Task title',180)}:{}),extra:e.extra===true,...(e.resolution?{resolution:e.resolution}:{}),...(e.movedTo?{movedTo:validDay(e.movedTo)}:{})};});
+    const habitEntries=rawEntries.map(e=>{if(!e||!habitIds.has(e.habitId)||!['todo','in_progress'].includes(e.status)||typeof e.notes!=='string'||e.notes.length>6000)throw new Error('Invalid habit note or status.');const date=validDay(e.date),key=e.habitId+':'+date;if(entryKeys.has(key))throw new Error('Duplicate daily habit notes.');entryKeys.add(key);if(e.resolution!=null&&!['moved','let_go'].includes(e.resolution))throw new Error('Invalid daily decision.');return{habitId:e.habitId,date,priority:priorityValue(e.priority),status:e.status,notes:e.notes,...(e.title?{title:text(e.title,'Task title',180)}:{}),extra:e.extra===true,...(e.resolution?{resolution:e.resolution}:{}),...(e.movedTo?{movedTo:validDay(e.movedTo)}:{})};});
     const themeColor=raw.themeColor??'#658d22';themeTokens(themeColor);
     const rawHabitColors=raw.savedHabitColors??[];
     if(!Array.isArray(rawHabitColors)||rawHabitColors.length>24||rawHabitColors.some(c=>typeof c!=='string'||!/^#[0-9a-f]{6}$/i.test(c)))throw new Error('Saved habit colors must contain up to 24 valid colors.');
@@ -273,7 +325,7 @@
     const events=rawEvents.map(e=>{const event=validateEvent(e);takeId(event.id);return event;});
     let active=false;for(const t of tasks){if(t.resolution){t.status='todo';continue;}if(t.status==='in_progress'){if(active)t.status='todo';else active=true;}}
     for(const e of habitEntries){if(e.resolution){e.status='todo';continue;}if(e.status==='in_progress'){if(active)e.status='todo';else active=true;}}
-    return{version:2,revision:raw.revision,displayUnit:raw.displayUnit,themeColor:themeColor.toLowerCase(),savedHabitColors,projects,projectTasks,tasks,sessions,habits,habitChecks,habitEntries,events,timer,previousTimer:previousTimer?JSON.parse(JSON.stringify(previousTimer)):null,legacyGoals:JSON.parse(JSON.stringify(legacyGoals))};
+    return{version:2,revision:raw.revision,displayUnit:raw.displayUnit,themeColor:themeColor.toLowerCase(),savedHabitColors,ignoredExternalIds:Array.isArray(raw.ignoredExternalIds)?[...new Set(raw.ignoredExternalIds.filter(x=>typeof x==='string'&&x.length<=180))].slice(0,20000):[],remindersEnabled:raw.remindersEnabled===true,projects,projectTasks,tasks,sessions,habits,habitChecks,habitEntries,events,timer,previousTimer:previousTimer?JSON.parse(JSON.stringify(previousTimer)):null,legacyGoals:JSON.parse(JSON.stringify(legacyGoals))};
   }
-return{MIN,HABIT_ICON_GROUPS,habitTimeSeries,timeChartScale,addProjectTask,addTodayEntry,setProjectTaskStatus,deleteProject,stageSummary,replaceStages,itemDayMinutes,setItemDayMinutes,timeMinute,validateEvent,eventsOnDate,habitAvailable,resolveUnfinished,HABIT_ICONS,habitScheduled,toggleHabit,habitMinutes,setItemMinutes,updateTask,dailyTasks,habitEntry,itemStatus,itemRunning,setItemStatus,saveItemNotes,deleteTask,uid,dayKey,validDay,themeTokens,formatClock,stopTimer,startTimer,addMinutes,migrate,emptyState,startOfWeekSunday,nextWeekStart,weekClock,parseDue,countdown,projectMinutes,minutesBetween,stagePercent,createState,validateState};
+return{MIN,mergeCalendarImport,reminderJobs,PRIORITIES,priorityValue,reminderValue,calendarTasks,materializeTask,setItemPriority,moveCalendarEvent,HABIT_ICON_GROUPS,habitTimeSeries,timeChartScale,addProjectTask,addTodayEntry,setProjectTaskStatus,deleteProject,stageSummary,replaceStages,itemDayMinutes,setItemDayMinutes,timeMinute,validateEvent,eventsOnDate,habitAvailable,resolveUnfinished,HABIT_ICONS,habitScheduled,toggleHabit,habitMinutes,setItemMinutes,updateTask,dailyTasks,habitEntry,itemStatus,itemRunning,setItemStatus,saveItemNotes,deleteTask,uid,dayKey,validDay,themeTokens,formatClock,stopTimer,startTimer,addMinutes,migrate,emptyState,startOfWeekSunday,nextWeekStart,weekClock,parseDue,countdown,projectMinutes,minutesBetween,stagePercent,createState,validateState};
 });
